@@ -693,7 +693,7 @@ services:
 
   # Frontend web application.
   web:
-    image: langgenius/dify-web:1.9.2
+    image: dify-web-local:latest
     restart: always
     environment:
       CONSOLE_API_URL: ${CONSOLE_API_URL:-}

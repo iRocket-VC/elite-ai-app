@@ -1,0 +1,114 @@
+# Development Docker Compose with hot-reload
+# This file extends docker-compose.yaml and adds source code mounts for real-time updates
+# Usage: docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up --watch
+
+services:
+  # API service with source code mount and hot-reload
+  api:
+    volumes:
+      # Mount source code for hot-reload (overrides the image's code)
+      - ../api:/app/api:cached
+      # Keep storage mount
+      - ./volumes/app/storage:/app/api/storage
+      # Exclude virtual environment and cache to use container's venv
+      - /app/api/.venv
+      - /app/api/__pycache__
+    environment:
+      DEBUG: "true"
+      FLASK_DEBUG: "true"
+      DEPLOY_ENV: DEVELOPMENT
+    # Override command to use Flask dev server with auto-reload
+    command: >
+      bash -c "
+        flask run --host=0.0.0.0 --port=5001 --debug --reload
+      "
+    develop:
+      watch:
+        - action: sync
+          path: ../api
+          target: /app/api
+          ignore:
+            - ".venv/**"
+            - "__pycache__/**"
+            - "*.pyc"
+            - ".git/**"
+            - ".pytest_cache/**"
+
+  # Worker service with source code mount
+  worker:
+    volumes:
+      - ../api:/app/api:cached
+      - ./volumes/app/storage:/app/api/storage
+      - /app/api/.venv
+      - /app/api/__pycache__
+    environment:
+      DEBUG: "true"
+      DEPLOY_ENV: DEVELOPMENT
+    # Use celery with --reload flag for auto-reload
+    command: >
+      bash -c "
+        celery -A app.celery worker -P threads -c 1 --loglevel INFO 
+        -Q dataset,generation,mail,ops_trace,app_deletion,plugin,workflow_storage 
+        --reload
+      "
+    develop:
+      watch:
+        - action: sync
+          path: ../api
+          target: /app/api
+          ignore:
+            - ".venv/**"
+            - "__pycache__/**"
+            - "*.pyc"
+            - ".git/**"
+
+  # Worker beat service
+  worker_beat:
+    volumes:
+      - ../api:/app/api:cached
+      - /app/api/.venv
+      - /app/api/__pycache__
+    environment:
+      DEBUG: "true"
+      DEPLOY_ENV: DEVELOPMENT
+
+  # Frontend web application with source code mount and hot-reload
+  web:
+    volumes:
+      # Mount source code for hot-reload
+      - ../web:/app/web:cached
+      # Exclude node_modules and build artifacts (use container's node_modules)
+      - /app/web/node_modules
+      - /app/web/.next
+      - /app/web/.turbo
+    environment:
+      NEXT_PUBLIC_DEPLOY_ENV: DEVELOPMENT
+      NEXT_PUBLIC_EDITION: SELF_HOSTED
+      NEXT_PUBLIC_API_PREFIX: ${CONSOLE_API_URL:-http://localhost:5001/console/api}
+      NEXT_PUBLIC_PUBLIC_API_PREFIX: ${APP_API_URL:-http://localhost:5001/api}
+      NODE_ENV: development
+    # Override command to use Next.js dev server
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      if [ ! -d /app/web/node_modules ]; then
+        echo 'Installing dependencies...'
+        cd /app/web && corepack enable && pnpm install
+      fi &&
+      cd /app/web &&
+      pnpm dev
+      "
+    ports:
+      - "3000:3000"
+    develop:
+      watch:
+        - action: sync
+          path: ../web
+          target: /app/web
+          ignore:
+            - "node_modules/**"
+            - ".next/**"
+            - ".turbo/**"
+            - ".git/**"
+            - ".pnpm-store/**"
+
